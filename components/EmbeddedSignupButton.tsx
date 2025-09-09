@@ -1,3 +1,4 @@
+// components/EmbeddedSignupButton.tsx
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -17,7 +18,7 @@ export default function EmbeddedSignupButton() {
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<TokenExchangeSuccess | null>(null);
 
-    // Wait for window.FB
+    // Wait for window.FB to load
     useEffect(() => {
         const id = setInterval(() => {
             if (typeof window !== "undefined" && window.FB && typeof window.FB.login === "function") {
@@ -28,44 +29,48 @@ export default function EmbeddedSignupButton() {
         return () => clearInterval(id);
     }, []);
 
+    // NON-async callback passed to FB.login
+    const handleFbLogin = useCallback((response: FBLoginResponse) => {
+        // run async work inside an IIFE to keep the outer callback sync
+        void (async () => {
+            try {
+                const code = response?.authResponse?.code;
+                if (!code) {
+                    setError("No authorization code returned (user canceled or flow failed).");
+                    return;
+                }
+
+                const r = await fetch("/api/meta/exchange", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ code, redirectUri: REDIRECT_URI }),
+                });
+
+                const json = (await r.json()) as TokenExchangeSuccess & { error?: string };
+                if (!r.ok || "error" in json) {
+                    throw new Error(json.error ?? "Token exchange failed");
+                }
+
+                setResult({
+                    access_token: json.access_token,
+                    token_type: json.token_type,
+                    expires_in: json.expires_in,
+                });
+            } catch (err) {
+                setError(err instanceof Error ? err.message : "Something went wrong");
+            } finally {
+                setBusy(false);
+            }
+        })();
+    }, []);
+
     const launch = useCallback(() => {
-        if (!window.FB) return;
+        if (!window.FB || busy) return;
         setBusy(true);
         setError(null);
 
         window.FB.login(
-            async (response) => {
-                try {
-                    const code = response?.authResponse?.code;
-                    if (!code) {
-                        setError("No authorization code returned (user canceled or flow failed).");
-                        setBusy(false);
-                        return;
-                    }
-
-                    const r = await fetch("/api/meta/exchange", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ code, redirectUri: REDIRECT_URI }),
-                    });
-
-                    const json = (await r.json()) as TokenExchangeSuccess & { error?: string };
-                    if (!r.ok || "error" in json) {
-                        throw new Error(json.error ?? "Token exchange failed");
-                    }
-
-                    setResult({
-                        access_token: json.access_token,
-                        token_type: json.token_type,
-                        expires_in: json.expires_in,
-                    });
-                } catch (err: unknown) {
-                    const message = err instanceof Error ? err.message : "Something went wrong";
-                    setError(message);
-                } finally {
-                    setBusy(false);
-                }
-            },
+            handleFbLogin,
             {
                 config_id: CONFIG_ID,
                 response_type: "code",
@@ -74,7 +79,7 @@ export default function EmbeddedSignupButton() {
                 extras: { sessionInfoVersion: "3" },
             }
         );
-    }, []);
+    }, [busy, handleFbLogin]);
 
     return (
         <div className="flex flex-col items-start gap-3">
