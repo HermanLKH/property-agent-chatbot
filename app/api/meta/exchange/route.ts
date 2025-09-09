@@ -1,8 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Vercel/Next hints
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type TokenExchangeSuccess = {
+    access_token: string;
+    token_type: string; // usually "bearer"
+    expires_in: number;
+};
+
+type TokenExchangeError = {
+    error: {
+        message: string;
+        type?: string;
+        code?: number;
+        error_subcode?: number;
+        fbtrace_id?: string;
+    };
+};
+
+type TokenExchangeResponse = TokenExchangeSuccess | TokenExchangeError;
+
+type ExchangeBody = {
+    code: string;
+    redirectUri: string;
+};
+
 export async function POST(req: NextRequest) {
     try {
-        const { code, redirectUri } = await req.json();
+        const body = (await req.json()) as Partial<ExchangeBody>;
+        const code = body.code;
+        const redirectUri = body.redirectUri;
 
         if (!code || !redirectUri) {
             return NextResponse.json({ error: "Missing code or redirectUri" }, { status: 400 });
@@ -16,23 +45,22 @@ export async function POST(req: NextRequest) {
             client_id: appId,
             client_secret: appSecret,
             code,
-            redirect_uri: redirectUri, // MUST exactly match the one configured in Meta app settings
+            redirect_uri: redirectUri, // MUST exactly match one configured in your Meta app
         });
 
         const url = `https://graph.facebook.com/${version}/oauth/access_token?${params.toString()}`;
-        const r = await fetch(url);
-        const data = await r.json();
+        const r = await fetch(url, { method: "GET" });
+        const data = (await r.json()) as TokenExchangeResponse;
 
-        if (!r.ok) {
-            return NextResponse.json({ error: data?.error?.message || "Exchange failed" }, { status: r.status });
+        if (!r.ok || "error" in data) {
+            const message = "error" in data ? data.error.message : "Exchange failed";
+            return NextResponse.json({ error: message }, { status: r.status || 500 });
         }
 
-        // data: { access_token, token_type, expires_in }
-        // From here, on the SERVER you typically:
-        //  - call /debug_token (optional) to inspect token
-        //  - call WhatsApp Business endpoints to read WABA, phone_number_id etc., and store per-tenant
-        return NextResponse.json(data);
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message || "Unexpected error" }, { status: 500 });
+        const { access_token, token_type, expires_in } = data;
+        return NextResponse.json({ access_token, token_type, expires_in });
+    } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Unexpected error";
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }
