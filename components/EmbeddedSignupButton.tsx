@@ -69,6 +69,12 @@ export default function EmbeddedSignupButton() {
         setBusy(true);
         setError(null);
 
+        console.log({
+            appId: process.env.NEXT_PUBLIC_FACEBOOK_APP_ID,
+            pageOrigin: window.location.origin,
+            redirectUri: process.env.NEXT_PUBLIC_FACEBOOK_REDIRECT_URI,
+        });
+
         window.FB.login(
             handleFbLogin,
             {
